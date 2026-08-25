@@ -1,0 +1,9 @@
+requests
+beautifulsoup4
+lxml
+pdfminer.six
+reportlab
+openai>=1.0.0
+python-dotenv
+openpyxl
+pandas
