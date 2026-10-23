@@ -1,0 +1,21 @@
+admissions process tutorials			
+
+Go to 
+office365.wsu.edu
+.
+
+Log in through the WSU sign-in page with your Network ID and password (same as myWSU login).
+
+On the Office 365 landing page, select the “
+Mail
+” icon link.
+
+The first time you access this, it will ask you to set your time zone.
+
+Your email address will be:
+
+YourNetworkID@wsu.edu
+
+(Replace ‘YourNetworkID’ with your personal Network ID. For example: 
+butch.cougar@wsu.edu
+.)

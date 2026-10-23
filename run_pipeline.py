@@ -31,7 +31,7 @@ def parse_args():
     p.add_argument("--input", default="UniversityNames.xlsx", help="Input Excel for university names")
     p.add_argument("--output", default="University_Output1.xlsx", help="Output Excel workbook path")
     p.add_argument("--model", default=None, help="LLM model name (overrides OPENAI_MODEL env var)")
-    p.add_argument("--timeout", type=int, default=10, help="Timeout seconds for URL reachability checks")
+    p.add_argument("--timeout", type=int, default=5, help="Timeout seconds for URL reachability checks")
     p.add_argument("--skip-agent", action="store_true", help="Skip university_agent_runner step")
     p.add_argument("--skip-filter", action="store_true", help="Skip filter_and_write_clgurls step")
     p.add_argument("--skip-scrape", action="store_true", help="Skip scrape_pipeline step")

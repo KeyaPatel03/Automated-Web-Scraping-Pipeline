@@ -1,0 +1,37 @@
+Admissions
+
+Getting Started
+
+To get started with the SilverStripe framework:
+
+Create a 
+Controller
+ subclass (
+docs.silverstripe.org/en/developer_guides/controllers/
+)
+
+Setup the routes.yml to your 
+Controller
+ (
+docs.silverstripe.org/en/developer_guides/controllers/routing
+).
+
+Create a template for your 
+Controller
+ (
+docs.silverstripe.org/en/developer_guides/templates/
+)
+
+Community resources
+
+silverstripe.org/slack
+ Join other SilverStripe developers in the community Slack channel.
+
+stackoverflow.com/questions/tagged/silverstripe
+ Ask SilverStripe questions on Stack Overflow.
+
+docs.silverstripe.org
+ Searchable developer documentation, how-tos, tutorials, and reference.
+
+api.silverstripe.org
+ API documentation for PHP classes, methods and properties.

@@ -8,6 +8,7 @@ This is the step 3 script in the requested pre-scrape pipeline.
 import argparse
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -53,7 +54,37 @@ def _is_reachable(session: requests.Session, url: str, timeout: int = 10) -> boo
         return False
 
 
-def run(input_xlsx: Path, out_txt: Path, timeout: int = 10):
+def load_cached_valid_urls(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    cached = set()
+    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.lower() in {"majors:", "admission requirements:"}:
+            continue
+        if _is_http_url(line):
+            cached.add(line.rstrip("/"))
+    return cached
+
+
+def classify_urls_for_validation(current_urls, cached_valid_urls):
+    cached_valid_urls = {str(u).strip().rstrip("/") for u in (cached_valid_urls or []) if str(u).strip()}
+    current = []
+    cached = set()
+    for url in current_urls:
+        norm = str(url).strip().rstrip("/")
+        if not norm:
+            continue
+        if norm in cached_valid_urls:
+            cached.add(norm)
+        else:
+            current.append(norm)
+    return cached, current
+
+
+def run(input_xlsx: Path, out_txt: Path, timeout: int = 5):
     try:
         admissions = pd.read_excel(input_xlsx, sheet_name="Admissions", engine="openpyxl")
     except Exception:
@@ -75,10 +106,9 @@ def run(input_xlsx: Path, out_txt: Path, timeout: int = 10):
     unis = pd.concat([admissions["university_name"], majors["university_name"]]).astype(str).str.strip()
     unis = [u for u in unis.unique() if u]
 
-    session = requests.Session()
-    session.headers.update({"User-Agent": "URLScrapePipeline/1.0"})
-
-    lines = []
+    unique_by_uni = {}
+    unique_urls = []
+    seen_urls = set()
     for uni in unis:
         uni_adm = admissions[admissions["university_name"] == uni]
         uni_maj = majors[majors["university_name"] == uni]
@@ -88,16 +118,51 @@ def run(input_xlsx: Path, out_txt: Path, timeout: int = 10):
             u = str(url).strip().rstrip("/")
             if not u:
                 continue
-            if _is_reachable(session, u, timeout=timeout):
-                adm_urls.append(u)
+            adm_urls.append(u)
 
         major_urls = []
         for url in uni_maj["major_url"].tolist():
             u = str(url).strip().rstrip("/")
             if not u:
                 continue
-            if _is_reachable(session, u, timeout=timeout):
-                major_urls.append(u)
+            major_urls.append(u)
+
+        unique_by_uni[uni] = {
+            "admissions": list(dict.fromkeys(adm_urls)),
+            "majors": list(dict.fromkeys(major_urls)),
+        }
+
+        for u in unique_by_uni[uni]["admissions"] + unique_by_uni[uni]["majors"]:
+            if u not in seen_urls:
+                seen_urls.add(u)
+                unique_urls.append(u)
+
+    previous_valid = load_cached_valid_urls(out_txt)
+    cached_urls, urls_to_validate = classify_urls_for_validation(unique_urls, previous_valid)
+    url_cache = {url: True for url in cached_urls}
+
+    def validate_url(url: str) -> bool:
+        if url in url_cache:
+            return url_cache[url]
+
+        session = requests.Session()
+        session.headers.update({"User-Agent": "URLScrapePipeline/1.0"})
+        result = _is_reachable(session, url, timeout=timeout)
+        session.close()
+        url_cache[url] = result
+        return result
+
+    if urls_to_validate:
+        max_workers = min(16, max(1, len(urls_to_validate)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(validate_url, urls_to_validate))
+        for url, ok in zip(urls_to_validate, results):
+            url_cache[url] = ok
+
+    lines = []
+    for uni in unis:
+        adm_urls = [u for u in unique_by_uni[uni]["admissions"] if url_cache.get(u, False)]
+        major_urls = [u for u in unique_by_uni[uni]["majors"] if url_cache.get(u, False)]
 
         if not adm_urls and not major_urls:
             continue
@@ -129,7 +194,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--input", default="University_Output1.xlsx")
     p.add_argument("--out", default="clgUrls.txt")
-    p.add_argument("--timeout", type=int, default=10)
+    p.add_argument("--timeout", type=int, default=5)
     return p.parse_args()
 
 

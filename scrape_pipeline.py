@@ -21,6 +21,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -74,16 +75,7 @@ logger = logging.getLogger(__name__)
 
 
 def read_urls():
-    if not URLS_FILE.exists():
-        logger.error("URLs file not found: %s", URLS_FILE)
-        return []
-    urls = []
-    for line in URLS_FILE.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        urls.append(line)
-    return urls
+    return existing_urls_from_file(URLS_FILE)
 
 
 def persist_urls(urls):
@@ -260,20 +252,48 @@ def meta_filename_from_url(url: str) -> str:
     return sha1(url)
 
 
+def existing_urls_from_file(path: Path):
+    if not path.exists():
+        return []
+    urls = []
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parsed = urlparse(line)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            logger.debug("Ignoring non-HTTP URL entry in %s: %s", path, line)
+            continue
+        urls.append(line)
+    return urls
+
+
+def has_complete_scraped_cache(urls):
+    if not urls:
+        return False
+    required = {f"{meta_filename_from_url(u)}.txt" for u in urls}
+    existing = {p.name for p in SCRAPED_DIR.glob("*.txt")}
+    return required.issubset(existing)
+
+
 def main():
     setup_logging()
     ensure_dirs()
-    # Run pre-scrape pipeline steps: generate workbook then filter and produce clgUrls.txt
-    try:
-        runner = str(BASE_DIR / "university_agent_runner.py")
-        filterer = str(BASE_DIR / "filter_and_write_clgurls.py")
-        logger.info("Running pre-scrape agent: %s", runner)
-        subprocess.check_call([sys.executable, runner], cwd=str(BASE_DIR))
-        logger.info("Running pre-scrape filter: %s", filterer)
-        subprocess.check_call([sys.executable, filterer], cwd=str(BASE_DIR))
-    except subprocess.CalledProcessError as e:
-        logger.exception("Pre-scrape step failed: %s", e)
-    urls = read_urls()
+    urls = existing_urls_from_file(URLS_FILE)
+    if urls and has_complete_scraped_cache(urls):
+        logger.info("All current URLs already have scraped output. Skipping pre-scrape validation and re-scrape work.")
+    else:
+        # Run pre-scrape pipeline steps: generate workbook then filter and produce clgUrls.txt
+        try:
+            runner = str(BASE_DIR / "university_agent_runner.py")
+            filterer = str(BASE_DIR / "filter_and_write_clgurls.py")
+            logger.info("Running pre-scrape agent: %s", runner)
+            subprocess.check_call([sys.executable, runner], cwd=str(BASE_DIR))
+            logger.info("Running pre-scrape filter: %s", filterer)
+            subprocess.check_call([sys.executable, filterer], cwd=str(BASE_DIR))
+        except subprocess.CalledProcessError as e:
+            logger.exception("Pre-scrape step failed: %s", e)
+        urls = existing_urls_from_file(URLS_FILE)
     # Build in-memory meta for existing scraped files. We do not persist metadata.
     meta = {}
     for url in urls:

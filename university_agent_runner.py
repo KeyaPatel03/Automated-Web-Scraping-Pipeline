@@ -165,6 +165,28 @@ def load_processed_university_names(output_xlsx: Path):
     return set()
 
 
+def build_chat_completion_kwargs(model: str, **kwargs):
+    payload = dict(kwargs)
+    payload["model"] = model
+
+    max_tokens = payload.pop("max_tokens", None)
+
+    model_name = str(model or "").lower()
+
+    # Newer reasoning models use max_completion_tokens
+    if max_tokens is not None:
+        if any(prefix in model_name for prefix in ("gpt-5", "o1", "o3", "o4")):
+            payload["max_completion_tokens"] = max_tokens
+        else:
+            payload["max_tokens"] = max_tokens
+
+    # This model only supports the default temperature=1
+    if any(prefix in model_name for prefix in ("gpt-5", "o1", "o3", "o4")):
+        payload.pop("temperature", None)
+
+    return payload
+
+
 def _openai_error_details(exc) -> str:
     body = getattr(exc, "body", None)
     if isinstance(body, dict):
@@ -230,30 +252,25 @@ def run_agent(input_xlsx: Path, output_xlsx: Path, model: str, rate_delay: float
 
         def ask(prompt: str):
             try:
+                base_kwargs = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": "Return only valid JSON matching the schema exactly. No explanations, no markdown, no commentary."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0,
+                    "max_tokens": 1500,
+                }
+                request_kwargs = build_chat_completion_kwargs(**base_kwargs)
+
                 if client is not None:
-                    resp = client.chat.completions.create(
-                        model=model,
-                        messages=[
-                            {"role": "system", "content": "Return only valid JSON matching the schema exactly. No explanations, no markdown, no commentary."},
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=0,
-                        max_tokens=1500,
-                    )
+                    resp = client.chat.completions.create(**request_kwargs)
                     content = resp.choices[0].message.content if resp.choices else None
                     return content
 
                 # Backward compatibility with older OpenAI SDKs.
                 openai.api_key = api_key
-                resp = openai.ChatCompletion.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": "Return only valid JSON matching the schema exactly. No explanations, no markdown, no commentary."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0,
-                    max_tokens=1500,
-                )
+                resp = openai.ChatCompletion.create(**request_kwargs)
                 content = None
                 if hasattr(resp, "choices") and resp.choices:
                     first = resp.choices[0]
@@ -280,25 +297,24 @@ def run_agent(input_xlsx: Path, output_xlsx: Path, model: str, rate_delay: float
         maj_text = ask(maj_prompt)
         time.sleep(rate_delay)
 
-        # prefer admissions response first if it contains both keys
-        payload = None
-        for txt in (adm_text, maj_text):
-            if not txt:
-                continue
-            parsed = safe_parse_json(txt)
-            if parsed is not None:
-                payload = normalize_payload(parsed, name)
-                break
+        adm_parsed = normalize_payload(safe_parse_json(adm_text or "") or {}, name)
+        maj_parsed = normalize_payload(safe_parse_json(maj_text or "") or {}, name)
 
-        # fallback: try to merge separate parses
-        if payload is None:
-            adm_parsed = normalize_payload(safe_parse_json(adm_text or "") or {}, name)
-            maj_parsed = normalize_payload(safe_parse_json(maj_text or "") or {}, name)
-            payload = {
-                "university": adm_parsed.get("university") or maj_parsed.get("university") or name,
-                "majors": maj_parsed.get("majors") or adm_parsed.get("majors") or [],
-                "admissions_urls": adm_parsed.get("admissions_urls") or maj_parsed.get("admissions_urls") or [],
-            }
+        payload = {
+            "university": adm_parsed.get("university") or maj_parsed.get("university") or name,
+            "majors": maj_parsed.get("majors") or adm_parsed.get("majors") or [],
+            "admissions_urls": adm_parsed.get("admissions_urls") or maj_parsed.get("admissions_urls") or [],
+        }
+
+        # If one response was valid and the other was missing or malformed, keep the valid content.
+        if not payload["majors"] and not payload["admissions_urls"]:
+            for txt in (adm_text, maj_text):
+                if not txt:
+                    continue
+                parsed = safe_parse_json(txt)
+                if parsed is not None:
+                    payload = normalize_payload(parsed, name)
+                    break
 
         # normalize and append
         universities_rows.append({"university_name": name})
@@ -336,7 +352,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--input", default="UniversityNames.xlsx", help="Input Excel with university names")
     p.add_argument("--output", default="University_Output1.xlsx", help="Output Excel workbook path")
-    p.add_argument("--model", default=os.environ.get("OPENAI_MODEL", "gpt-4.1"), help="Model name")
+    p.add_argument("--model", default=os.environ.get("OPENAI_MODEL", "gpt-5.6-luna"), help="Model name")
     return p.parse_args()
 
 

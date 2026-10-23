@@ -1,0 +1,4 @@
+Reloads current page: 
+Start an Application
+
+Student Application
