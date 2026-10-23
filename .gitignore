@@ -1,5 +1,6 @@
 .env
 __pycache__/
 output/
+scraped_texts/
 clgUrls.txt
 University_Output1.xlsx
